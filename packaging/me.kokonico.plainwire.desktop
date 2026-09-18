@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Plainwire
+Comment=Desktop client for Plainwire
+Exec=plainwire-desktop %U
+Icon=plainwire
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+MimeType=x-scheme-handler/plainwire;
+StartupNotify=true
+StartupWMClass=plainwire-desktop
