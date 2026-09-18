@@ -51,4 +51,6 @@ The CI build compiles against Debian Sid Qt WebEngine with compiler warnings tre
 
 # Licensing
 
-This is license under our PlainSimple 1.0 license. see [LICENSE](https://github.com/Plainwire-development/Plainwire-desktop/blob/main/LICENSE) for details.
+This is license under our PlainSimple 1.0 license.
+
+> see [LICENSE](https://github.com/Plainwire-development/Plainwire-desktop/blob/main/PLAINWIRE-LICENSE) for details.
