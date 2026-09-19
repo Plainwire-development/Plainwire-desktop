@@ -8,28 +8,35 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QModelIndex>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QSettings>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QSystemTrayIcon>
+#include <QTabBar>
 #include <QTimer>
 #include <QUrl>
+#include <QVBoxLayout>
 #include <QWebEngineDesktopMediaRequest>
 #include <QWebEngineDownloadRequest>
 #include <QWebEngineFullScreenRequest>
@@ -61,11 +68,11 @@ QString resourceText(const QString &path) {
     return QString::fromUtf8(file.readAll());
 }
 
-QString injectedScript() {
+QString injectedScript(const QString &origin) {
     return QStringLiteral(R"JS(
 (() => {
   'use strict';
-  const ORIGIN = 'https://plainwi.re';
+  const ORIGIN = '%1';
   if (location.origin !== ORIGIN || window.top !== window) return;
 
   document.documentElement.classList.add('plainwire-desktop');
@@ -77,7 +84,7 @@ QString injectedScript() {
       writable: false,
       value: Object.freeze({
         active: true,
-        version: '%1',
+        version: '%2',
         publicOrigin: ORIGIN,
         shell: 'qtwebengine',
         engine: 'chromium',
@@ -123,10 +130,10 @@ QString injectedScript() {
   addEventListener('pageshow', reconcile, { passive: true });
   document.addEventListener('visibilitychange', reconcile, { passive: true });
 })();
-)JS").arg(QStringLiteral(PLAINWIRE_VERSION));
+)JS").arg(origin, QStringLiteral(PLAINWIRE_VERSION));
 }
 
-QString desktopPolishScript() {
+QString desktopPolishScript(const QString &origin) {
     const QString css = resourceText(QStringLiteral(":/plainwire/resources/desktop-polish.css"));
     if (css.isEmpty()) return {};
 
@@ -137,7 +144,8 @@ QString desktopPolishScript() {
     return QStringLiteral(R"JS(
 (() => {
   'use strict';
-  if (location.origin !== 'https://plainwi.re' || window.top !== window) return;
+  const ORIGIN = '%1';
+  if (location.origin !== ORIGIN || window.top !== window) return;
   document.documentElement.classList.add('plainwire-desktop');
   const old = document.getElementById('plainwire-desktop-polish');
   if (old) old.remove();
@@ -189,7 +197,7 @@ QString desktopPolishScript() {
   });
   observer.observe(document.body, { childList: true, subtree: true });
 })();
-)JS").arg(json);
+)JS").arg(origin, json);
 }
 
 QString permissionDescription(QWebEnginePermission::PermissionType type) {
@@ -223,13 +231,14 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1320, 840);
 
     createProfile();
+    createTabs();
     createWebView();
     createActions();
     createTray();
     createNoticeOverlay();
     restoreWindowState();
 
-    view_->load(QUrl(kOrigin + QStringLiteral("/")));
+    view_->load(QUrl(ServerConfig::instance().origin() + QStringLiteral("/")));
 }
 
 MainWindow::~MainWindow() = default;
@@ -311,24 +320,7 @@ void MainWindow::createProfile() {
     settings->setAttribute(QWebEngineSettings::AllowRunningInsecureContent, false);
     settings->setUnknownUrlSchemePolicy(QWebEngineSettings::DisallowUnknownUrlSchemes);
 
-    QWebEngineScript bootstrap;
-    bootstrap.setName(QStringLiteral("plainwire-desktop-bootstrap"));
-    bootstrap.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    bootstrap.setWorldId(QWebEngineScript::MainWorld);
-    bootstrap.setRunsOnSubFrames(false);
-    bootstrap.setSourceCode(injectedScript());
-    profile_->scripts()->insert(bootstrap);
-
-    const QString polishSource = desktopPolishScript();
-    if (!polishSource.isEmpty()) {
-        QWebEngineScript polish;
-        polish.setName(QStringLiteral("plainwire-desktop-polish"));
-        polish.setInjectionPoint(QWebEngineScript::DocumentReady);
-        polish.setWorldId(QWebEngineScript::MainWorld);
-        polish.setRunsOnSubFrames(false);
-        polish.setSourceCode(polishSource);
-        profile_->scripts()->insert(polish);
-    }
+    applyServerScripts();
 
     connect(profile_, &QWebEngineProfile::downloadRequested, this,
             [this](QWebEngineDownloadRequest *download) {
@@ -394,13 +386,302 @@ void MainWindow::createProfile() {
     });
 }
 
+void MainWindow::createTabs() {
+    auto *container = new QWidget(this);
+    container->setObjectName(QStringLiteral("PlainwireRoot"));
+    auto *layout = new QVBoxLayout(container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    tabBar_ = new QTabBar(container);
+    tabBar_->setObjectName(QStringLiteral("PlainwireTabBar"));
+    tabBar_->setDocumentMode(true);
+    tabBar_->setDrawBase(false);
+    tabBar_->setExpanding(false);
+    tabBar_->setUsesScrollButtons(false);
+    tabBar_->addTab(QStringLiteral("Chat"));
+    tabBar_->addTab(QStringLiteral("Servers"));
+    tabBar_->setStyleSheet(QStringLiteral(
+        "QTabBar#PlainwireTabBar {"
+        "  background: #161a22;"
+        "}"
+        "QTabBar#PlainwireTabBar::tab {"
+        "  background: transparent;"
+        "  color: #a7afbe;"
+        "  padding: 10px 16px;"
+        "  margin-top: 4px;"
+        "  margin-left: 4px;"
+        "  border: none;"
+        "  border-bottom: 2px solid transparent;"
+        "  font-weight: 600;"
+        "}"
+        "QTabBar#PlainwireTabBar::tab:hover {"
+        "  background: #1f2533;"
+        "  color: #f5f7fb;"
+        "}"
+        "QTabBar#PlainwireTabBar::tab:selected {"
+        "  color: #f5f7fb;"
+        "  border-bottom: 2px solid #6ea8fe;"
+        "}"));
+    layout->addWidget(tabBar_);
+
+    stack_ = new QStackedWidget(container);
+    layout->addWidget(stack_, 1);
+
+    serversPanel_ = createServersPanel();
+    stack_->addWidget(serversPanel_);
+
+    setCentralWidget(container);
+
+    connect(tabBar_, &QTabBar::currentChanged, this, [this](int index) {
+        if (!stack_) return;
+        stack_->setCurrentIndex(index);
+        if (index == 1) refreshServerPanel();
+    });
+}
+
+QWidget *MainWindow::createServersPanel() {
+    auto *panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("PlainwireServersPanel"));
+
+    auto *outer = new QVBoxLayout(panel);
+    outer->setContentsMargins(32, 24, 32, 24);
+    outer->setSpacing(16);
+
+    auto *card = new QWidget(panel);
+    card->setObjectName(QStringLiteral("PlainwireServerCard"));
+    auto *layout = new QVBoxLayout(card);
+    layout->setContentsMargins(24, 22, 24, 22);
+    layout->setSpacing(14);
+
+    auto *heading = new QLabel(QStringLiteral("Plainwire server"), card);
+    heading->setObjectName(QStringLiteral("PlainwirePanelHeading"));
+    layout->addWidget(heading);
+
+    auto *hint = new QLabel(
+        QStringLiteral("Plainwire can be self-hosted, so you can connect to your own server. "
+                       "Choose the server this app talks to; each server keeps its own log-in and settings."),
+        card);
+    hint->setWordWrap(true);
+    hint->setObjectName(QStringLiteral("PlainwirePanelHint"));
+    layout->addWidget(hint);
+
+    serverCombo_ = new QComboBox(card);
+    serverCombo_->setObjectName(QStringLiteral("PlainwireServerCombo"));
+    layout->addWidget(serverCombo_);
+
+    auto *addRow = new QWidget(card);
+    auto *addLayout = new QHBoxLayout(addRow);
+    addLayout->setContentsMargins(0, 0, 0, 0);
+    addLayout->setSpacing(8);
+    customHostEdit_ = new QLineEdit(addRow);
+    customHostEdit_->setObjectName(QStringLiteral("PlainwireServerEdit"));
+    customHostEdit_->setPlaceholderText(QStringLiteral("https://your-server.example.com"));
+    customHostEdit_->setClearButtonEnabled(true);
+    auto *addButton = new QPushButton(QStringLiteral("Add server"), addRow);
+    addButton->setObjectName(QStringLiteral("PlainwirePrimaryButton"));
+    addLayout->addWidget(customHostEdit_, 1);
+    addLayout->addWidget(addButton);
+    layout->addWidget(addRow);
+
+    auto *removeButton = new QPushButton(QStringLiteral("Remove selected"), card);
+    removeButton->setObjectName(QStringLiteral("PlainwireGhostButton"));
+    layout->addWidget(removeButton);
+
+    auto *bottomRow = new QWidget(card);
+    auto *bottomLayout = new QHBoxLayout(bottomRow);
+    bottomLayout->setContentsMargins(0, 0, 0, 0);
+    bottomLayout->setSpacing(8);
+    auto *resetButton = new QPushButton(QStringLiteral("Reset to official server"), bottomRow);
+    resetButton->setObjectName(QStringLiteral("PlainwireGhostButton"));
+    auto *connectButton = new QPushButton(QStringLiteral("Connect"), bottomRow);
+    connectButton->setObjectName(QStringLiteral("PlainwirePrimaryButton"));
+    bottomLayout->addWidget(resetButton);
+    bottomLayout->addStretch(1);
+    bottomLayout->addWidget(connectButton);
+    layout->addWidget(bottomRow);
+
+    layout->addStretch(1);
+    outer->addWidget(card);
+    outer->addStretch(1);
+
+    panel->setStyleSheet(QStringLiteral(
+        "QWidget#PlainwireServersPanel { background: #10131a; }"
+        "QWidget#PlainwireServerCard { background: #171c28; border: 1px solid #262e40; border-radius: 14px; }"
+        "QLabel#PlainwirePanelHeading { color: #f5f7fb; font-size: 17px; font-weight: 700; }"
+        "QLabel#PlainwirePanelHint { color: #a7afbe; font-size: 13px; }"
+        "QComboBox#PlainwireServerCombo {"
+        "  background: #10141d; color: #f5f7fb; border: 1px solid #2a3346;"
+        "  border-radius: 8px; padding: 8px 10px;"
+        "}"
+        "QComboBox#PlainwireServerCombo::drop-down { border: none; width: 26px; }"
+        "QComboBox#PlainwireServerCombo::down-arrow {"
+        "  image: none; border-left: 4px solid transparent; border-right: 4px solid transparent;"
+        "  border-top: 5px solid #a7afbe; margin-right: 8px;"
+        "}"
+        "QComboBox#PlainwireServerCombo QAbstractItemView {"
+        "  background: #171c28; color: #f5f7fb; border: 1px solid #2a3346;"
+        "  selection-background-color: #2442a8; selection-color: #ffffff; outline: none;"
+        "}"
+        "QLineEdit#PlainwireServerEdit {"
+        "  background: #10141d; color: #f5f7fb; border: 1px solid #2a3346;"
+        "  border-radius: 8px; padding: 8px 10px;"
+        "}"
+        "QLineEdit#PlainwireServerEdit:focus { border: 1px solid #6ea8fe; }"
+        "QPushButton#PlainwirePrimaryButton {"
+        "  background: #3b6fd4; color: #ffffff; border: none; border-radius: 8px;"
+        "  padding: 8px 14px; font-weight: 600;"
+        "}"
+        "QPushButton#PlainwirePrimaryButton:hover { background: #4782e8; }"
+        "QPushButton#PlainwirePrimaryButton:pressed { background: #2f5cb3; }"
+        "QPushButton#PlainwireGhostButton {"
+        "  background: transparent; color: #c6cdd8; border: 1px solid #3a4352;"
+        "  border-radius: 8px; padding: 8px 14px;"
+        "}"
+        "QPushButton#PlainwireGhostButton:hover { background: #1f2533; color: #f5f7fb; }"));
+
+    connect(addButton, &QPushButton::clicked, this, &MainWindow::addServerFromUi);
+    connect(removeButton, &QPushButton::clicked, this, &MainWindow::removeServerFromUi);
+    connect(resetButton, &QPushButton::clicked, this, &MainWindow::resetServerFromUi);
+    connect(connectButton, &QPushButton::clicked, this, &MainWindow::applyServerFromUi);
+    connect(customHostEdit_, &QLineEdit::returnPressed, this, &MainWindow::addServerFromUi);
+
+    return panel;
+}
+
+void MainWindow::refreshServerPanel() {
+    if (!serverCombo_) return;
+    serverCombo_->blockSignals(true);
+    serverCombo_->clear();
+    serverCombo_->addItem(QStringLiteral("Official server — plainwi.re"), kDefaultOrigin);
+    const QStringList custom = ServerConfig::instance().customHosts();
+    for (const QString &host : custom) serverCombo_->addItem(host, host);
+
+    const QString active = ServerConfig::instance().origin();
+    int index = serverCombo_->findData(active);
+    if (index < 0 && active != kDefaultOrigin) {
+        serverCombo_->addItem(QStringLiteral("%1 (connected)").arg(active), active);
+        index = serverCombo_->count() - 1;
+    }
+    serverCombo_->setCurrentIndex(qMax(0, index));
+    serverCombo_->blockSignals(false);
+    serverCombo_->setToolTip(QStringLiteral("Active server: %1").arg(active));
+}
+
+void MainWindow::addServerFromUi() {
+    if (!customHostEdit_ || !serverCombo_) return;
+    const QString raw = customHostEdit_->text().trimmed();
+    if (raw.isEmpty()) {
+        customHostEdit_->setFocus();
+        return;
+    }
+    const QString normalized = ServerConfig::normalizedOrigin(raw);
+    if (normalized.isEmpty()) {
+        showNotice(QStringLiteral("That doesn't look like a valid server address. Use https://host or http://host:port."), 6000);
+        return;
+    }
+    ServerConfig::instance().addCustomHost(normalized);
+    customHostEdit_->clear();
+    refreshServerPanel();
+    const int index = serverCombo_->findData(normalized);
+    if (index >= 0) serverCombo_->setCurrentIndex(index);
+    showNotice(QStringLiteral("Added %1 to your servers.").arg(normalized), 3500);
+    serverCombo_->setFocus();
+}
+
+void MainWindow::removeServerFromUi() {
+    if (!serverCombo_) return;
+    const QString current = serverCombo_->currentData().toString();
+    if (current.isEmpty() || current == kDefaultOrigin) {
+        showNotice(QStringLiteral("The official server can't be removed."), 3500);
+        return;
+    }
+    ServerConfig::instance().removeCustomHost(current);
+    refreshServerPanel();
+    showNotice(QStringLiteral("Removed %1 from your servers.").arg(current), 3500);
+}
+
+void MainWindow::applyServerFromUi() {
+    if (!serverCombo_) return;
+    const QString target = serverCombo_->currentData().toString();
+    if (target.isEmpty()) return;
+    if (target == ServerConfig::instance().origin()) {
+        showNotice(QStringLiteral("Already connected to %1.").arg(target), 3000);
+        return;
+    }
+    if (ServerConfig::instance().setOrigin(target)) reloadForServer();
+}
+
+void MainWindow::resetServerFromUi() {
+    if (ServerConfig::instance().isDefault()) {
+        showNotice(QStringLiteral("Already connected to Plainwire's official server."), 3000);
+        return;
+    }
+    ServerConfig::instance().resetToDefault();
+    reloadForServer();
+}
+
+void MainWindow::openServersTab() {
+    if (!tabBar_ || !stack_) return;
+    refreshServerPanel();
+    tabBar_->setCurrentIndex(1);
+    stack_->setCurrentIndex(1);
+    if (customHostEdit_) customHostEdit_->setFocus();
+}
+
+void MainWindow::switchToChat() {
+    if (!tabBar_ || !stack_) return;
+    tabBar_->setCurrentIndex(0);
+    stack_->setCurrentIndex(0);
+    if (view_) view_->setFocus(Qt::OtherFocusReason);
+}
+
+void MainWindow::applyServerScripts() {
+    if (!profile_) return;
+    const QString origin = ServerConfig::instance().origin();
+    QWebEngineScriptCollection *scripts = profile_->scripts();
+
+    QWebEngineScript bootstrap;
+    bootstrap.setName(QStringLiteral("plainwire-desktop-bootstrap"));
+    bootstrap.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    bootstrap.setWorldId(QWebEngineScript::MainWorld);
+    bootstrap.setRunsOnSubFrames(false);
+    bootstrap.setSourceCode(injectedScript(origin));
+    const QList<QWebEngineScript> oldBootstrap = scripts->find(bootstrap.name());
+    for (const QWebEngineScript &script : oldBootstrap) scripts->remove(script);
+    scripts->insert(bootstrap);
+
+    const QString polishSource = desktopPolishScript(origin);
+    QWebEngineScript polish;
+    polish.setName(QStringLiteral("plainwire-desktop-polish"));
+    polish.setInjectionPoint(QWebEngineScript::DocumentReady);
+    polish.setWorldId(QWebEngineScript::MainWorld);
+    polish.setRunsOnSubFrames(false);
+    if (!polishSource.isEmpty()) {
+        polish.setSourceCode(polishSource);
+        const QList<QWebEngineScript> oldPolish = scripts->find(polish.name());
+        for (const QWebEngineScript &script : oldPolish) scripts->remove(script);
+        scripts->insert(polish);
+    }
+}
+
+void MainWindow::reloadForServer() {
+    applyServerScripts();
+    const QString origin = ServerConfig::instance().origin();
+    view_->setUrl(QUrl(origin + QStringLiteral("/")));
+    switchToChat();
+    showNotice(QStringLiteral("Connected to %1").arg(origin), 5000);
+}
+
 void MainWindow::createWebView() {
-    view_ = new QWebEngineView(this);
+    view_ = new QWebEngineView(stack_);
     page_ = new PlainwirePage(profile_, [this](const QString &message) {
         showNotice(message, 7000);
     }, view_);
     view_->setPage(page_);
-    setCentralWidget(view_);
+    stack_->insertWidget(0, view_);
+    stack_->setCurrentIndex(0);
+    tabBar_->setCurrentIndex(0);
 
     connect(page_, &QWebEnginePage::permissionRequested, this,
             [this](QWebEnginePermission permission) {
@@ -565,8 +846,9 @@ void MainWindow::createActions() {
         showNotice(QStringLiteral("Reloading without cache…"), 2500);
     });
     addShortcut(QStringLiteral("Ctrl+,"), [this] {
-        view_->setUrl(QUrl(kOrigin + QStringLiteral("/#settings")));
+        view_->setUrl(QUrl(ServerConfig::instance().origin() + QStringLiteral("/#settings")));
     });
+    addShortcut(QStringLiteral("Ctrl+Shift+S"), [this] { openServersTab(); });
     addShortcut(QStringLiteral("Ctrl++"), [this] { setZoomFactor(zoomFactor_ + 0.1); });
     addShortcut(QStringLiteral("Ctrl+="), [this] { setZoomFactor(zoomFactor_ + 0.1); });
     addShortcut(QStringLiteral("Ctrl+-"), [this] { setZoomFactor(zoomFactor_ - 0.1); });
@@ -591,6 +873,7 @@ void MainWindow::createTray() {
     QAction *openAction = menu->addAction(QStringLiteral("Open Plainwire"));
     QAction *reloadAction = menu->addAction(QStringLiteral("Reload"));
     QAction *settingsAction = menu->addAction(QStringLiteral("Settings"));
+    QAction *serverAction = menu->addAction(QStringLiteral("Switch server…"));
     menu->addSeparator();
     QAction *quitAction = menu->addAction(QStringLiteral("Quit"));
     tray_->setContextMenu(menu);
@@ -602,7 +885,11 @@ void MainWindow::createTray() {
         showAndFocus();
     });
     connect(settingsAction, &QAction::triggered, this, [this] {
-        view_->setUrl(QUrl(kOrigin + QStringLiteral("/#settings")));
+        view_->setUrl(QUrl(ServerConfig::instance().origin() + QStringLiteral("/#settings")));
+        showAndFocus();
+    });
+    connect(serverAction, &QAction::triggered, this, [this] {
+        openServersTab();
         showAndFocus();
     });
     connect(quitAction, &QAction::triggered, this, [this] {

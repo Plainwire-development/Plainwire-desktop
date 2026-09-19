@@ -328,6 +328,13 @@ install_new_version() {
       echo "Cancelled. Nothing was changed."
       exit 1
     fi
+  elif [[ "$mode" == "reinstall" ]]; then
+    echo "==> Found Plainwire $(installed_version) already installed at $INSTALL_BIN."
+    if ! prompt_yn "Replace it with a fresh copy of $new_ver (settings are kept)? [Y/n]" y; then
+      echo "==> Keeping the current install."
+      maybe_add_to_path
+      exit 0
+    fi
   elif [[ "$mode" == "replace" ]]; then
     echo
     echo "==> There is already a program at $INSTALL_BIN that is not a"
@@ -368,6 +375,8 @@ install_new_version() {
 
   if [[ "$mode" == "update" ]]; then
     echo "==> Done: Plainwire updated to $new_ver."
+  elif [[ "$mode" == "reinstall" ]]; then
+    echo "==> Done: refreshed Plainwire $new_ver at $INSTALL_BIN."
   elif [[ "$mode" == "replace" ]]; then
     echo "==> Done: replaced the other program at $INSTALL_BIN with Plainwire $new_ver."
   else
@@ -424,10 +433,10 @@ main() {
       fi
       [[ -n "$cur" ]] || die "Plainwire is not installed yet. Run '$0' (install mode) first."
       if [[ "$cur" == "$latest_no_v" ]]; then
-        echo "==> Already up to date ($cur). Nothing to do."
-        exit 0
+        install_new_version "$latest_no_v" reinstall
+      else
+        install_new_version "$latest_no_v" update
       fi
-      install_new_version "$latest_no_v" update
       ;;
     install)
       if [[ -x "$INSTALL_BIN" ]]; then
@@ -435,8 +444,7 @@ main() {
           echo "==> Found a non-Plainwire program at $INSTALL_BIN; it will be replaced."
           install_new_version "$latest_no_v" replace
         elif [[ "$cur" == "$latest_no_v" ]]; then
-          echo "==> Plainwire $cur is already installed. Nothing to do."
-          exit 0
+          install_new_version "$latest_no_v" reinstall
         else
           echo "==> Found an existing install ($cur); I will update it to $latest_no_v."
           install_new_version "$latest_no_v" update

@@ -30,8 +30,8 @@ if grep -RniE --exclude-dir=.git --exclude='CHANGELOG.md' --exclude='README.md' 
   fail 'legacy WebKit/Tauri references remain in active project files'
 fi
 
-grep -qF 'project(PlainwireDesktop VERSION 2.3.0 LANGUAGES CXX)' CMakeLists.txt \
-  || fail 'CMake version is not 2.3.0'
+grep -qF 'project(PlainwireDesktop VERSION 2.4.0 LANGUAGES CXX)' CMakeLists.txt \
+  || fail 'CMake version is not 2.4.0'
 grep -qF 'https://plainwi.re' src/app_config.hpp \
   || fail 'production Plainwire URL is not plainwi.re'
 grep -qF 'plainwi.re' src/main.cpp \
@@ -97,4 +97,4 @@ if find . -path './build' -prune -o \
   fail 'compiled/generated artifacts found in source tree'
 fi
 
-printf 'Plainwire Desktop 2.3.0 source checks passed.\n'
+printf 'Plainwire Desktop 2.4.0 source checks passed.\n'

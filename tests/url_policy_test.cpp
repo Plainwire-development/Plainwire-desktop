@@ -19,9 +19,13 @@ bool expect(bool condition, const char *message) {
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    app.setOrganizationName(QStringLiteral("PlainwireDesktopTests"));
+    app.setApplicationName(QStringLiteral("url-policy"));
     Q_UNUSED(app);
     bool ok = true;
 
+    ok &= expect(plainwire::ServerConfig::instance().isDefault(),
+                 "fresh config should point at the official server");
     ok &= expect(plainwire::isPlainwireUrl(QUrl(QStringLiteral("https://plainwi.re/#dm/12"))),
                  "production Plainwire URL should be accepted");
     ok &= expect(!plainwire::isPlainwireUrl(QUrl(QStringLiteral("http://plainwi.re/"))),
@@ -39,6 +43,29 @@ int main(int argc, char **argv) {
         QUrl(QStringLiteral("plainwire://open?route=%23settings")));
     ok &= expect(settings == QUrl(QStringLiteral("https://plainwi.re/#settings")),
                  "open deep link should preserve a safe hash route");
+
+    ok &= expect(plainwire::ServerConfig::normalizedOrigin(QStringLiteral("https://selfhost.example.com"))
+                     == QStringLiteral("https://selfhost.example.com"),
+                 "self-hosted origin should be accepted");
+    ok &= expect(plainwire::ServerConfig::normalizedOrigin(QStringLiteral("https://selfhost.example.com:8443"))
+                     == QStringLiteral("https://selfhost.example.com:8443"),
+                 "self-hosted origin with a port should be accepted");
+    ok &= expect(plainwire::ServerConfig::normalizedOrigin(QStringLiteral("ftp://selfhost.example.com")).isEmpty(),
+                 "non-HTTP servers should be rejected");
+    ok &= expect(plainwire::ServerConfig::instance().setOrigin(QStringLiteral("https://selfhost.example.com")),
+                 "switching to a self-hosted server should succeed");
+    ok &= expect(plainwire::isPlainwireUrl(QUrl(QStringLiteral("https://selfhost.example.com/#dm/12"))),
+                 "self-hosted Plainwire URL should be accepted");
+    ok &= expect(!plainwire::isPlainwireUrl(QUrl(QStringLiteral("https://plainwi.re/#dm/12"))),
+                 "official host should not be accepted after switching to a self-hosted server");
+    ok &= expect(!plainwire::isPlainwireUrl(QUrl(QStringLiteral("https://selfhost.example.com:8443/#dm/12"))),
+                 "mismatched port on the self-hosted server should be rejected");
+    const QUrl selfDm = plainwire::deepLinkTarget(QUrl(QStringLiteral("plainwire://dm/42")));
+    ok &= expect(selfDm == QUrl(QStringLiteral("https://selfhost.example.com/#dm/42")),
+                 "DM deep link should route to the active self-hosted server");
+    plainwire::ServerConfig::instance().resetToDefault();
+    ok &= expect(plainwire::isPlainwireUrl(QUrl(QStringLiteral("https://plainwi.re/#dm/12"))),
+                 "resetting should restore the official server");
 
     ok &= expect(!plainwire::deepLinkTarget(
                      QUrl(QStringLiteral("plainwire://open?route=%23dm%2F12%0Aevil"))).isValid(),

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.0
+
+- added a Servers tab so Plainwire Desktop can connect to self-hosted Plainwire servers instead of only the official `https://plainwi.re`;
+- servers are validated, saved per user and switchable from the app, the system tray and the `Ctrl+Shift+S` shortcut;
+- deep links, permission prompts, notifications and navigation policies now follow the active server;
+- added a reset option to return to the official server at any time.
+
 ## 2.3.0
 
 - moved the production service to `https://plainwi.re`;
