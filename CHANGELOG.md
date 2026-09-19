@@ -5,7 +5,8 @@
 - added a Servers tab so Plainwire Desktop can connect to self-hosted Plainwire servers instead of only the official `https://plainwi.re`;
 - servers are validated, saved per user and switchable from the app, the system tray and the `Ctrl+Shift+S` shortcut;
 - deep links, permission prompts, notifications and navigation policies now follow the active server;
-- added a reset option to return to the official server at any time.
+- added a reset option to return to the official server at any time;
+- fixed the prebuilt installer silently cancelling when piped through `curl … | bash` (it now prompts on the controlling terminal).
 
 ## 2.3.0
 

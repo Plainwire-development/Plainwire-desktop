@@ -32,12 +32,7 @@ DESKTOP_FILE="me.kokonico.plainwire.desktop"
 ICON_FILE="plainwire.png"
 MODE="install"
 ASSUME_YES=0
-INTERACTIVE=0
 VERSION=""
-
-if [[ -t 0 ]] && [[ -t 1 ]]; then
-  INTERACTIVE=1
-fi
 
 usage() {
   sed -nE 's/^# ?//p' "${BASH_SOURCE[0]}" | sed -nE '/^Plainwire Desktop/,/^Environment:/p' | head -n 40
@@ -61,10 +56,18 @@ prompt_yn() {
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     return 0
   fi
-  if [[ "$INTERACTIVE" -eq 0 ]]; then
+
+  # When the script is piped into bash (curl ... | bash) stdin is not the
+  # user's terminal, so read from the controlling one instead. Runs without a
+  # TTY anywhere (CI, cron) still auto-decline rather than hang.
+  if [[ -t 0 ]] && [[ -t 1 ]]; then
+    read -rp "$msg " ans
+  elif exec 3<>/dev/tty 2>/dev/null; then
+    read -rp "$msg " ans <&3
+    exec 3<&- 3>&- 2>/dev/null || true
+  else
     return 1
   fi
-  read -rp "$msg " ans
   case "${ans:-$default}" in
     y|Y|yes|YES|Yes) return 0 ;;
     *) return 1 ;;
