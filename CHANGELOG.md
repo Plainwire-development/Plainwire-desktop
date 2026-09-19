@@ -6,7 +6,8 @@
 - servers are validated, saved per user and switchable from the app, the system tray and the `Ctrl+Shift+S` shortcut;
 - deep links, permission prompts, notifications and navigation policies now follow the active server;
 - added a reset option to return to the official server at any time;
-- fixed the prebuilt installer silently cancelling when piped through `curl … | bash` (it now prompts on the controlling terminal).
+- fixed the prebuilt installer silently cancelling when piped through `curl … | bash` (it now prompts on the controlling terminal);
+- made the installer's Qt runtime check also probe the standard system library directories so it doesn't warn on Debian when ldconfig's cache is stale.
 
 ## 2.3.0
 

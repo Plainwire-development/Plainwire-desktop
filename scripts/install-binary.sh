@@ -52,21 +52,30 @@ have() {
 }
 
 prompt_yn() {
-  local msg="$1" default="${2:-n}" ans
+  local msg="$1" default="${2:-n}" ans line_fd=0
+
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     return 0
   fi
 
   # When the script is piped into bash (curl ... | bash) stdin is not the
-  # user's terminal, so read from the controlling one instead. Runs without a
-  # TTY anywhere (CI, cron) still auto-decline rather than hang.
-  if [[ -t 0 ]] && [[ -t 1 ]]; then
-    read -rp "$msg " ans
-  elif exec 3<>/dev/tty 2>/dev/null; then
-    read -rp "$msg " ans <&3
-    exec 3<&- 3>&- 2>/dev/null || true
+  # user's terminal, so read from the controlling terminal instead when one
+  # exists. Without a TTY anywhere (CI, cron) prompts decline rather than hang.
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    if { exec 3<>/dev/tty; } 2>/dev/null; then
+      line_fd=3
+    else
+      return 1
+    fi
+  fi
+
+  # Print the prompt to stderr ourselves: `read -p` only displays its message
+  # when the fd it reads is a terminal, which silently hides it behind a pipe.
+  printf '%s ' "$msg" >&2
+  if [[ "$line_fd" -ne 0 ]]; then
+    read -r ans <&3 || return 1
   else
-    return 1
+    read -r ans || return 1
   fi
   case "${ans:-$default}" in
     y|Y|yes|YES|Yes) return 0 ;;
@@ -134,9 +143,16 @@ write_state() {
 }
 
 check_qt_runtime() {
-  if ldconfig -p 2>/dev/null | grep -q 'libQt6WebEngineCore\.so\.6'; then
+  local soname='libQt6WebEngineCore.so.6' dir
+  if ldconfig -p 2>/dev/null | grep -qF "$soname"; then
     return 0
   fi
+  # ldconfig's cache can be stale or omit /usr/lib/x86_64-linux-gnu, so also
+  # probe the usual system library directories for the actual soname file.
+  for dir in /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib64 /usr/lib \
+             /lib/x86_64-linux-gnu /lib/aarch64-linux-gnu /lib; do
+    [[ -e "$dir/$soname" ]] && return 0
+  done
   warn "This prebuilt binary needs Qt 6 WebEngine runtime libraries, which we could not find"
   warn "on your system (libQt6WebEngineCore.so.6). You can install them with something like:"
   warn "  sudo apt install qt6-base-dev qt6-webengine-dev"
