@@ -209,9 +209,21 @@ restore_backup() {
 }
 
 install_desktop_files() {
-  install -Dm 644 "$TMP/extract/$DESKTOP_FILE" "$PREFIX/share/applications/$DESKTOP_FILE" 2>/dev/null || {
+  if [[ -f "$TMP/extract/$DESKTOP_FILE" ]]; then
+    install -d "$PREFIX/share/applications"
+    # GUI launchers do not inherit the shell PATH (~/.local/bin is absent in
+    # KDE/GNOME sessions), so reference the absolute install path in Exec
+    # instead of a bare command name that would not be found.
+    sed -e "s|^Exec=.*|Exec=$INSTALL_BIN %U|" \
+      "$TMP/extract/$DESKTOP_FILE" > "$PREFIX/share/applications/$DESKTOP_FILE"
+    chmod 644 "$PREFIX/share/applications/$DESKTOP_FILE"
+    # Drop stale per-user handler files written by old installers; the main
+    # entry already registers x-scheme-handler/plainwire.
+    rm -f "$PREFIX/share/applications/plainwire-desktop-handler.desktop"
+    rm -f "$HOME/.local/share/applications/plainwire-desktop-handler.desktop"
+  else
     warn "Could not install the .desktop file (optional)."
-  }
+  fi
   install -Dm 644 "$TMP/extract/$ICON_FILE" "$PREFIX/share/icons/hicolor/256x256/apps/$ICON_FILE" 2>/dev/null || {
     warn "Could not install the icon (optional)."
   }
@@ -223,6 +235,10 @@ refresh_desktop_db() {
   fi
   if have xdg-mime; then
     xdg-mime default "$DESKTOP_FILE" x-scheme-handler/plainwire >/dev/null 2>&1 || true
+  fi
+  # Rebuild the application menu (KDE) so the corrected .desktop entry is used.
+  if have kbuildsycoca6; then
+    kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
   fi
 }
 

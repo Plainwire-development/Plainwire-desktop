@@ -151,7 +151,7 @@ QString desktopPolishScript(const QString &origin) {
   if (old) old.remove();
   const style = document.createElement('style');
   style.id = 'plainwire-desktop-polish';
-  style.textContent = %1[0];
+  style.textContent = %2[0];
   (document.head || document.documentElement).appendChild(style);
 
   // Media can appear in long histories. Decode it off the critical scroll path.

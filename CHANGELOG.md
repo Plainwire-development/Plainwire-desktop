@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.1
+
+- fixed the desktop polish stylesheet not loading in 2.4.0: the origin placeholder and the CSS both used `%1`, so the injected script became invalid JavaScript (`Unexpected token ':'`) and the polished desktop UI was never applied;
+- the prebuilt installer now writes the menu entry with the absolute install path in `Exec`, so the app launches from the desktop/application menu even though GUI sessions do not put `~/.local/bin` on `PATH`;
+- the installer also removes a stale `plainwire-desktop-handler.desktop` that pointed at a nonexistent `/usr/bin/plainwire-desktop` and breaks `plainwire://` links, and rebuilds the KDE menu cache after installing.
+
 ## 2.4.0
 
 - added a Servers tab so Plainwire Desktop can connect to self-hosted Plainwire servers instead of only the official `https://plainwi.re`;
