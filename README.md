@@ -1,6 +1,8 @@
 # Plainwire Desktop
 > # currently it has wiring for debian systems. will add more interactive support for others.
 
+> it works on others, the script just doesnt handle deps interactively for others.
+
 ----------------------------------
 Plainwire Desktop is the native desktop app for [plainwi.re](https://plainwi.re).
 
