@@ -27,6 +27,7 @@ DOWNLOADS_URL="${PLAINWIRE_ASSETS:-https://github.com/$REPO/releases/latest/down
 PREFIX="${PLAINWIRE_PREFIX:-$HOME/.local}"
 INSTALL_BIN="$PREFIX/bin/plainwire-desktop"
 BACKUP_BIN="$PREFIX/lib/plainwire/plainwire-desktop.old"
+STATE_FILE="$PREFIX/lib/plainwire/installed"
 DESKTOP_FILE="me.kokonico.plainwire.desktop"
 ICON_FILE="plainwire.png"
 MODE="install"
@@ -56,7 +57,7 @@ have() {
 }
 
 prompt_yn() {
-  local msg="$1" ans
+  local msg="$1" default="${2:-n}" ans
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     return 0
   fi
@@ -64,7 +65,7 @@ prompt_yn() {
     return 1
   fi
   read -rp "$msg " ans
-  case "${ans}" in
+  case "${ans:-$default}" in
     y|Y|yes|YES|Yes) return 0 ;;
     *) return 1 ;;
   esac
@@ -101,8 +102,32 @@ fetch_latest_tag() {
   printf '%s' "$tag"
 }
 
-local_version() {
-  "$INSTALL_BIN" --version 2>/dev/null | tail -n1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1 || true
+# Report the version of an existing *Plainwire* binary at the install path.
+# Returns nothing when the file there is missing, not executable, or is some
+# other program that happens to share the name - so unrelated apps in
+# local/bin are never treated as a Plainwire install.
+installed_version() {
+  local out
+  [[ -x "$INSTALL_BIN" ]] || return 0
+  out="$("$INSTALL_BIN" --version 2>/dev/null | tail -n1 || true)"
+  case "$out" in
+    *Plainwire*)
+      printf '%s' "$out" | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1 || true
+      ;;
+  esac
+}
+
+# Authoritative record that the prebuilt installer put a binary here, written
+# only after a fully verified swap so it can never mark a broken install.
+write_state() {
+  local ver="$1" tmp
+  install -d "$(dirname "$STATE_FILE")"
+  tmp="$(mktemp "$STATE_FILE.XXXXXX")" 2>/dev/null || return 1
+  printf 'version=%s\ninstalled_by=prebuilt\n' "$ver" > "$tmp"
+  if ! mv -f "$tmp" "$STATE_FILE"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 check_qt_runtime() {
@@ -208,29 +233,89 @@ swap_binary() {
   fi
 }
 
-maybe_add_to_path() {
-  case ":$PATH:" in
-    *":$PREFIX/bin:"*) return 0 ;;
-  esac
+rc_add_path() {
+  local rc="$1"
+  local tmp w1 w2 newline
+  w1="${PREFIX}/bin:\$PATH"
+  w2=""
+  if [[ "$PREFIX" == "$HOME/"* ]]; then
+    w2="\$HOME/${PREFIX#"$HOME/"}/bin:\$PATH"
+  fi
+  newline="export PATH=\"${PREFIX}/bin:\$PATH\""
 
-  if [[ "$INTERACTIVE" -eq 1 ]] && prompt_yn "Add $PREFIX/bin to your PATH? [y/N]"; then
-    local shell_name rc line
+  tmp="$(mktemp "$(dirname "$rc")/$(basename "$rc").XXXXXX")" 2>/dev/null || return 1
+
+  # Rewrite the profile through a temp file: drop every previous Plainwire PATH
+  # entry, then append one fresh line. The temp file is renamed into place only
+  # when complete, so the profile can never be left truncated on failure.
+  awk -v W1="$w1" -v W2="$w2" '
+    function is_plainwire(line,     val) {
+      if (line !~ /^export PATH=/) return 0
+      val = line
+      sub(/^export PATH="/, "", val)
+      sub(/"$/, "", val)
+      return (val == W1 || (W2 != "" && val == W2))
+    }
+    /^# Add Plainwire bin directory to PATH[[:space:]]*$/ { skip = 1; next }
+    skip == 1 { skip = 0; next }
+    is_plainwire($0) { next }
+    { print }
+  ' "$rc" > "$tmp" || { rm -f "$tmp"; return 1; }
+
+  printf '\n# Add Plainwire bin directory to PATH\n%s\n' "$newline" >> "$tmp"
+  if ! mv -f "$tmp" "$rc"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+maybe_add_to_path() {
+  if [[ ":$PATH:" == *":$PREFIX/bin:"* ]]; then
+    echo "==> $PREFIX/bin is already on your PATH; you can run 'plainwire-desktop'."
+    return 0
+  fi
+
+  echo
+  echo "==> The install directory $PREFIX/bin is not on your PATH yet, so"
+  echo "    'plainwire-desktop' would only work if you use the full path every time."
+  echo "    Adding it to your shell profile is automatic and easy to reverse."
+
+  if prompt_yn "Add $PREFIX/bin to your PATH automatically? [Y/n]" y; then
+    local shell_name rc rc_has_entry
     shell_name="$(basename "${SHELL:-/bin/sh}")"
     case "$shell_name" in
       bash) rc="$HOME/.bashrc" ;;
       zsh) rc="$HOME/.zshrc" ;;
       *) rc="$HOME/.profile" ;;
     esac
-    line="export PATH=\"$PREFIX/bin:\$PATH\""
-    if [[ -f "$rc" ]] && grep -qF "$PREFIX/bin" "$rc"; then
-      echo "==> PATH entry already present in $rc, nothing to do."
+
+    if [[ -f "$rc" ]] && grep -qF "export PATH=\"$PREFIX/bin:\$PATH\"" "$rc"; then
+      echo "==> $PREFIX/bin is already set up in $rc, nothing to do."
+      return 0
+    fi
+
+    rc_has_entry=0
+    if [[ -f "$rc" ]] &&
+       { grep -q '^# Add Plainwire bin directory to PATH' "$rc" ||
+         grep -qF "export PATH=\"$PREFIX/bin:\$PATH\"" "$rc"; }; then
+      rc_has_entry=1
+    fi
+
+    if rc_add_path "$rc"; then
+      if [[ "$rc_has_entry" -eq 1 ]]; then
+        echo "==> Replaced the existing $PREFIX/bin entry in $rc with the current one,"
+        echo "    written atomically so $rc can never be left half-edited."
+      else
+        echo "==> Added the PATH entry for $PREFIX/bin to $rc."
+      fi
+      echo "    New terminals can run 'plainwire-desktop' right away."
+      echo "    To use it in this terminal now: source $rc"
     else
-      printf '\n# Add Plainwire bin directory to PATH\n%s\n' "$line" >> "$rc"
-      echo "==> Added to $rc. Run 'source $rc' (or restart your terminal) to pick it up."
+      warn "Could not update $rc (left untouched). You can still run: $INSTALL_BIN"
     fi
   else
-    echo "==> Run Plainwire with: $INSTALL_BIN"
-    echo "    (or add $PREFIX/bin to your PATH to use 'plainwire-desktop')."
+    echo "==> Skipped. Launch Plainwire with: $INSTALL_BIN"
+    echo "    (or add $PREFIX/bin to your PATH to run 'plainwire-desktop')."
   fi
 }
 
@@ -238,8 +323,17 @@ install_new_version() {
   local new_ver="$1" mode="$2"
 
   if [[ "$mode" == "update" ]]; then
-    echo "==> Found current version: $(local_version)"
+    echo "==> Found current version: $(installed_version)"
     if ! prompt_yn "Update to Plainwire $new_ver? [y/N]"; then
+      echo "Cancelled. Nothing was changed."
+      exit 1
+    fi
+  elif [[ "$mode" == "replace" ]]; then
+    echo
+    echo "==> There is already a program at $INSTALL_BIN that is not a"
+    echo "    Plainwire binary. It will be moved aside first and restored"
+    echo "    automatically if anything goes wrong, so it cannot be lost."
+    if ! prompt_yn "Replace it with Plainwire $new_ver? [y/N]"; then
       echo "Cancelled. Nothing was changed."
       exit 1
     fi
@@ -261,19 +355,26 @@ install_new_version() {
   echo "==> Installing to $PREFIX ..."
   install_desktop_files
   swap_binary "$TMP/extract/plainwire-desktop"
-  rm -f "$BACKUP_BIN"
+  # After a successful swap: for a replace, keep the previous (non-Plainwire)
+  # program preserved; otherwise drop the rollback copy of the old Plainwire.
+  if [[ "$mode" == "replace" ]]; then
+    mv -f "$BACKUP_BIN" "$PREFIX/lib/plainwire/previous-non-plainwire.bak" 2>/dev/null || true
+  else
+    rm -f "$BACKUP_BIN"
+  fi
   BACKUP_RESTORED=1
   refresh_desktop_db
+  write_state "$new_ver" || warn "Could not write the install state marker (the binary itself is installed and working)."
 
   if [[ "$mode" == "update" ]]; then
     echo "==> Done: Plainwire updated to $new_ver."
+  elif [[ "$mode" == "replace" ]]; then
+    echo "==> Done: replaced the other program at $INSTALL_BIN with Plainwire $new_ver."
   else
     echo "==> Done: installed Plainwire $new_ver to $PREFIX."
   fi
   echo "==> Launch it with: plainwire-desktop"
-  if [[ "$mode" == "install" ]]; then
-    maybe_add_to_path
-  fi
+  maybe_add_to_path
 }
 
 main() {
@@ -297,8 +398,8 @@ main() {
   local latest_no_v="${latest#v}"
 
   local cur=""
-  if [[ -x "$INSTALL_BIN" ]]; then
-    cur="$(local_version)"
+  if [[ -x "$INSTALL_BIN" ]] || [[ -f "$STATE_FILE" ]]; then
+    cur="$(installed_version)"
   fi
 
   case "$MODE" in
@@ -318,6 +419,9 @@ main() {
       exit 1
       ;;
     update)
+      if [[ -x "$INSTALL_BIN" ]] && [[ -z "$cur" ]]; then
+        die "There is already a program at $INSTALL_BIN that is not Plainwire. Run '$0' (install mode) to replace it."
+      fi
       [[ -n "$cur" ]] || die "Plainwire is not installed yet. Run '$0' (install mode) first."
       if [[ "$cur" == "$latest_no_v" ]]; then
         echo "==> Already up to date ($cur). Nothing to do."
@@ -326,13 +430,17 @@ main() {
       install_new_version "$latest_no_v" update
       ;;
     install)
-      if [[ -n "$cur" ]]; then
-        if [[ "$cur" == "$latest_no_v" ]]; then
+      if [[ -x "$INSTALL_BIN" ]]; then
+        if [[ -z "$cur" ]]; then
+          echo "==> Found a non-Plainwire program at $INSTALL_BIN; it will be replaced."
+          install_new_version "$latest_no_v" replace
+        elif [[ "$cur" == "$latest_no_v" ]]; then
           echo "==> Plainwire $cur is already installed. Nothing to do."
           exit 0
+        else
+          echo "==> Found an existing install ($cur); I will update it to $latest_no_v."
+          install_new_version "$latest_no_v" update
         fi
-        echo "==> Found an existing install ($cur); I will update it to $latest_no_v."
-        install_new_version "$latest_no_v" update
       else
         install_new_version "$latest_no_v" install
       fi
