@@ -18,7 +18,38 @@ It uses Qt 6 and QtWebEngine, so the app runs the same Plainwire client and acco
 
 The desktop app uses QtWebEngine/Chromium. There is no Tauri/WebKitGTK version anymore.
 
-## Build
+## Install the prebuilt binary (fastest)
+
+Every tagged release ships prebuilt binaries for Linux **x86_64** and **arm64**.
+This one-liner detects your platform, downloads the right binary, verifies its
+SHA-256 checksum, sanity-runs it, and installs it to `~/.local`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Plainwire-development/Plainwire-desktop/main/scripts/install-binary.sh | bash
+```
+
+The replacement is atomic: your current binary is backed up, and if anything
+fails it is rolled back, so the app is never left in a broken state.
+
+Prebuilt binaries are available for Linux only. On other platforms, or if a
+binary for your CPU is not available, build from source (below); the installer
+tells you when that is the case.
+
+## Update
+
+To check for and apply a newer version (it prompts first, and does nothing if
+you are already on the latest):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Plainwire-development/Plainwire-desktop/main/scripts/update.sh | bash
+```
+
+Or, from a local checkout: `./scripts/update.sh`
+
+Settings, logins, downloads and window state live in `~/.config` (not in the
+binary), so updating never touches your data.
+
+## Build from source
 
 On Debian:
 
@@ -31,7 +62,7 @@ sudo apt install \
 ./build/plainwire-desktop
 ```
 
-Install it for your user with:
+Install the source build for your user with:
 
 ```sh
 ./install-local.sh

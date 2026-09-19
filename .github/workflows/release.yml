@@ -4,34 +4,36 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  linux:
-    name: Qt WebEngine / Debian Sid x86_64
-    runs-on: ubuntu-latest
+  build:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            docker_platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            docker_platform: linux/arm64
+            arch: arm64
+
     steps:
       - uses: actions/checkout@v4
-
-      - name: Validate tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(sed -nE 's/^project\(PlainwireDesktop VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' CMakeLists.txt)"
-          [[ "$GITHUB_REF_NAME" == "v$version" ]] || {
-            echo "Tag $GITHUB_REF_NAME does not match CMake version $version" >&2
-            exit 1
-          }
 
       - name: Source checks
         run: ./scripts/verify.sh
 
-      - name: Build
+      - name: Build in Debian Sid container
         run: |
           mkdir -p "$PWD/out"
-          docker run --rm \
+          docker run --rm --platform "${{ matrix.docker_platform }}" \
             -v "$PWD:/src" \
             -w /src \
             debian:sid-slim \
@@ -50,16 +52,51 @@ jobs:
               install -Dm644 packaging/me.kokonico.plainwire.desktop /src/out/me.kokonico.plainwire.desktop
               install -Dm644 resources/plainwire.png /src/out/plainwire.png
             '
-          tar -C out -czf plainwire-desktop-debian-sid-amd64.tar.gz \
+          tar -C out -czf "plainwire-desktop-linux-${{ matrix.arch }}.tar.gz" \
             plainwire-desktop me.kokonico.plainwire.desktop plainwire.png
-          sha256sum plainwire-desktop-debian-sid-amd64.tar.gz > plainwire-desktop-debian-sid-amd64.sha256
 
-      - name: Publish
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: "plainwire-desktop-linux-${{ matrix.arch }}"
+          path: "plainwire-desktop-linux-${{ matrix.arch }}.tar.gz"
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^project\(PlainwireDesktop VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' CMakeLists.txt)"
+          [[ "$GITHUB_REF_NAME" == "v$version" ]] || {
+            echo "Tag $GITHUB_REF_NAME does not match CMake version $version" >&2
+            exit 1
+          }
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum plainwire-desktop-linux-*.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          cd dist
           gh release create "$GITHUB_REF_NAME" \
             --title "Plainwire Desktop $GITHUB_REF_NAME" \
-            --notes-file CHANGELOG.md \
-            plainwire-desktop-debian-sid-amd64.tar.gz \
-            plainwire-desktop-debian-sid-amd64.sha256
+            --notes-file ../CHANGELOG.md \
+            plainwire-desktop-linux-*.tar.gz SHA256SUMS.txt
