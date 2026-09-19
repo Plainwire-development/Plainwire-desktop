@@ -1,6 +1,7 @@
 # Plainwire Desktop
-** > currently it has wiring for debian systems. will add more interactive support for others. **
+> # currently it has wiring for debian systems. will add more interactive support for others.
 
+----------------------------------
 Plainwire Desktop is the native desktop app for [plainwi.re](https://plainwi.re).
 
 It uses Qt 6 and QtWebEngine, so the app runs the same Plainwire client and account as the website while keeping desktop things like notifications, downloads, screen sharing, deep links, tray behavior, and window state native.
